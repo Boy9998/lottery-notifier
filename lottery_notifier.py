@@ -15,7 +15,7 @@ import logging
 API_URL = "https://macaumarksix.com/api/live2"
 MAX_RETRIES = 10  # 开奖API最大重试次数
 RETRY_INTERVAL = 30  # 开奖API重试间隔(秒)
-EMAIL_MAX_RETRIES = 5  # 邮件发送最大重试次数
+EMAIL_MAX_RETRIES = 2  # 邮件发送最大重试次数
 EMAIL_RETRY_DELAY = 3  # 邮件发送重试间隔(秒)
 
 # 配置日志
