@@ -277,8 +277,10 @@ def send_dingtalk_message(result):
         response = requests.post(webhook, json=payload, headers=headers, params=params, timeout=10)
         response.raise_for_status()
         logger.info("✅ 钉钉消息发送成功！")
+        return True
     except Exception as e:
         logger.error(f"❌ 钉钉消息发送失败: {str(e)}")
+        return False
 
 def send_email(result):
     """发送邮件通知（严格遵循要求样式）"""
@@ -335,33 +337,29 @@ def send_email(result):
         logger.error(f"❌ 超过最大重试次数({EMAIL_MAX_RETRIES})，邮件发送失败")
         logger.error("详细错误日志:")
         logger.error(error_log)
+    
+    return success
 
 def main():
     """主控制流程"""
     beijing_tz = pytz.timezone('Asia/Shanghai')
-    logger.info(f"====== {datetime.now(beijing_tz).strftime('%Y-%m-%d %H:%M:%S')} 开奖监控启动 ======")
+    current_time = datetime.now(beijing_tz)
+    logger.info(f"====== {current_time.strftime('%Y-%m-%d %H:%M:%S')} 开奖监控启动 ======")
     
     # 第一阶段：提前20分钟启动（21:10）
     logger.info("===== 第一阶段监控开始 =====")
     phase1_result = get_lottery_result(phase=1)
     
+    # 关键修复：第一阶段获取到任何结果都发送通知
     if phase1_result:
-        # 检查是否为当日开奖结果
-        current_time = datetime.now(beijing_tz)
-        open_time = datetime.strptime(phase1_result['openTime'], '%Y-%m-%d %H:%M:%S')
-        open_time = beijing_tz.localize(open_time)
-        
-        if open_time.date() == current_time.date():
-            logger.info("✅ 第一阶段已获取当日开奖结果，立即发送通知")
-            send_dingtalk_message(phase1_result)
-            send_email(phase1_result)
-            logger.info("====== 通知发送完成! ======")
-            return
+        logger.info("✅ 第一阶段获取到开奖结果，立即发送通知")
+        send_dingtalk_message(phase1_result)
+        send_email(phase1_result)
+        logger.info("====== 通知发送完成! ======")
+        return
     
     # 等待进入第二阶段（21:31:31 - 21:34:59）
-    current_time = datetime.now(beijing_tz)
     phase2_start = current_time.replace(hour=21, minute=31, second=31, microsecond=0)
-    phase2_end = current_time.replace(hour=21, minute=35, second=0, microsecond=0)
     
     # 如果还没到第二阶段开始时间，等待
     if current_time < phase2_start:
@@ -374,7 +372,7 @@ def main():
     phase2_result = get_lottery_result(phase=2)
     
     if phase2_result:
-        logger.info("✅ 第二阶段获取到当日开奖结果")
+        logger.info("✅ 第二阶段获取到开奖结果")
         send_dingtalk_message(phase2_result)
         send_email(phase2_result)
         logger.info("====== 通知发送完成! ======")
