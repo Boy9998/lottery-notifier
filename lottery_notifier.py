@@ -13,10 +13,8 @@ import logging
 
 # 配置参数
 API_URL = "https://macaumarksix.com/api/macaujc2.com"
-PHASE1_RETRIES = 5  # 第一阶段最大重试次数
-PHASE1_INTERVAL = 120  # 第一阶段重试间隔(秒)
-PHASE2_RETRIES = 30  # 第二阶段最大重试次数
-PHASE2_INTERVAL = 10  # 第二阶段重试间隔(秒)
+MAX_RETRIES = 10  # 开奖API最大重试次数
+RETRY_INTERVAL = 30  # 开奖API重试间隔(秒)
 EMAIL_MAX_RETRIES = 5  # 邮件发送最大重试次数
 EMAIL_RETRY_DELAY = 3  # 邮件发送重试间隔(秒)
 
@@ -28,69 +26,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-def get_lottery_result(phase):
+def get_lottery_result():
     """获取开奖结果（带重试机制）"""
-    beijing_tz = pytz.timezone('Asia/Shanghai')
-    current_time = datetime.now(beijing_tz)
-    
-    # 根据阶段设置参数
-    if phase == 1:
-        max_retries = PHASE1_RETRIES
-        retry_interval = PHASE1_INTERVAL
-    else:
-        max_retries = PHASE2_RETRIES
-        retry_interval = PHASE2_INTERVAL
-    
-    logger.info(f"开始第{phase}阶段获取开奖结果...")
-    
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info(f"尝试 #{attempt}/{max_retries}: 请求开奖数据...")
-            response = requests.get(API_URL, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.debug(f"API响应: {data}")
-            
-            # 验证数据格式
-            if data and isinstance(data, list) and data[0].get('openCode'):
-                result = data[0]
-                # 验证开奖时间是否为今日
-                open_time = datetime.strptime(result['openTime'], '%Y-%m-%d %H:%M:%S')
-                open_time = beijing_tz.localize(open_time)
-                
-                logger.info(f"开奖时间: {open_time} | 当前时间: {current_time}")
-                
-                # 第一阶段：只要获取到数据就返回（无论是否当日）
-                if phase == 1:
-                    logger.info("✅ 第一阶段获取到开奖结果")
-                    return result
-                
-                # 第二阶段：只返回当日开奖结果
-                if phase == 2 and open_time.date() == current_time.date():
-                    logger.info("✅ 第二阶段获取到今日开奖结果")
-                    return result
-                else:
-                    logger.warning(f"⚠️ 开奖时间非今日: {open_time.date()} vs {current_time.date()}")
-            else:
-                logger.warning("⚠️ API返回数据格式无效")
-        except Exception as e:
-            logger.error(f"❌ 请求异常: {str(e)}")
+    try:
+        response = requests.get(API_URL, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         
-        # 未获取到有效结果时等待重试
-        if attempt < max_retries:
-            logger.info(f"🕒 {retry_interval}秒后重试...")
-            time.sleep(retry_interval)
-    
-    logger.error(f"❌ 超过最大重试次数({max_retries})，未获取到有效结果")
+        # 验证数据格式
+        if data and isinstance(data, list) and data[0].get('openCode'):
+            return data[0]
+    except Exception as e:
+        logger.error(f"获取数据失败: {str(e)}")
     return None
 
-def format_dingtalk_message(result):
+def format_dingtalk_message(result, notification_time):
     """格式化钉钉通知消息（严格遵循要求样式）"""
-    # 获取当前北京时间作为通知时间
-    beijing_tz = pytz.timezone('Asia/Shanghai')
-    notification_time = datetime.now(beijing_tz).strftime('%Y-%m-%d %H:%M:%S')
-    
     # 解析数据
     numbers = result['openCode'].split(',')
     zodiacs = result['zodiac'].split(',')
@@ -103,37 +54,26 @@ def format_dingtalk_message(result):
         'green': '绿'
     }
     
-    # 创建带波色文字的号码（确保波色显示为中文）
-    chinese_waves = []
-    for wave in waves:
-        wave_lower = wave.strip().lower()
-        chinese_waves.append(wave_mapping.get(wave_lower, wave_lower))
+    # 格式化开奖号码行
+    numbers_line = " ".join([f"{num:>4}" for num in numbers])
     
-    # 计算对齐所需的最大宽度
-    max_num_width = max(len(num) for num in numbers)
-    max_wave_width = max(len(wave) for wave in chinese_waves)
-    max_zodiac_width = max(len(z) for z in zodiacs)
+    # 格式化波色行
+    wave_line = " ".join([f"{wave_mapping.get(wave.lower(), wave):>4}" for wave in waves])
     
-    # 对齐文本
-    aligned_numbers = [num.ljust(max_num_width + 2) for num in numbers]
-    aligned_waves = [wave.ljust(max_wave_width + 2) for wave in chinese_waves]
-    aligned_zodiacs = [z.ljust(max_zodiac_width + 2) for z in zodiacs]
+    # 格式化生肖行
+    zodiac_line = " ".join([f"{zodiac:>4}" for zodiac in zodiacs])
     
-    # 构建消息 - 严格遵循要求样式
-    message = "".join(aligned_numbers) + "\n"
-    message += "".join(aligned_waves) + "\n"
-    message += "".join(aligned_zodiacs) + "\n\n"
+    # 构建消息
+    message = f"{numbers_line}\n"
+    message += f"{wave_line}\n"
+    message += f"{zodiac_line}\n"
     message += f"開獎時間：{result['openTime']}期號：{result['expect']}期\n"
     message += f"通知時間：{notification_time}"
     
     return message
 
-def format_email_content(result):
+def format_email_content(result, notification_time):
     """格式化邮件通知内容（严格遵循要求样式）"""
-    # 获取当前北京时间作为通知时间
-    beijing_tz = pytz.timezone('Asia/Shanghai')
-    notification_time = datetime.now(beijing_tz).strftime('%Y-%m-%d %H:%M:%S')
-    
     # 解析数据
     numbers = result['openCode'].split(',')
     zodiacs = result['zodiac'].split(',')
@@ -183,7 +123,7 @@ def format_email_content(result):
         </div>
         """
     
-    # 构建邮件内容（HTML格式） - 严格遵循要求样式
+    # 构建邮件内容（HTML格式）
     body = f"""
     <html>
     <head>
@@ -244,15 +184,15 @@ def format_email_content(result):
     
     return body
 
-def send_dingtalk_message(result):
-    """发送钉钉通知（严格遵循要求样式）"""
+def send_dingtalk_message(result, notification_time):
+    """发送钉钉通知"""
     logger.info("准备发送钉钉通知...")
     
     webhook = os.environ['DINGTALK_WEBHOOK']
     secret = os.environ['DINGTALK_SECRET']
     
     # 构建消息内容
-    message = format_dingtalk_message(result)
+    message = format_dingtalk_message(result, notification_time)
     logger.info(f"钉钉通知内容:\n{message}")
     
     # 生成签名
@@ -277,13 +217,11 @@ def send_dingtalk_message(result):
         response = requests.post(webhook, json=payload, headers=headers, params=params, timeout=10)
         response.raise_for_status()
         logger.info("✅ 钉钉消息发送成功！")
-        return True
     except Exception as e:
         logger.error(f"❌ 钉钉消息发送失败: {str(e)}")
-        return False
 
-def send_email(result):
-    """发送邮件通知（严格遵循要求样式）"""
+def send_email(result, notification_time):
+    """发送邮件通知"""
     logger.info("准备发送邮件通知...")
     
     # QQ邮箱配置
@@ -297,7 +235,7 @@ def send_email(result):
     email_subject = result['openCode']
     
     # 创建邮件
-    msg = MIMEText(format_email_content(result), "html")
+    msg = MIMEText(format_email_content(result, notification_time), "html")
     msg["Subject"] = email_subject
     msg["From"] = sender
     msg["To"] = receiver
@@ -337,48 +275,60 @@ def send_email(result):
         logger.error(f"❌ 超过最大重试次数({EMAIL_MAX_RETRIES})，邮件发送失败")
         logger.error("详细错误日志:")
         logger.error(error_log)
-    
-    return success
 
-def main():
-    """主控制流程"""
+def is_today(result):
+    """检查结果是否为今日开奖"""
+    try:
+        open_time = datetime.strptime(result['openTime'], '%Y-%m-%d %H:%M:%S')
+        current_time = datetime.now()
+        return open_time.date() == current_time.date()
+    except:
+        return False
+
+def monitor_lottery():
+    """监控开奖结果（两阶段策略）"""
+    # 获取当前北京时间
     beijing_tz = pytz.timezone('Asia/Shanghai')
-    current_time = datetime.now(beijing_tz)
-    logger.info(f"====== {current_time.strftime('%Y-%m-%d %H:%M:%S')} 开奖监控启动 ======")
+    now = datetime.now(beijing_tz)
+    notification_time = now.strftime('%Y-%m-%d %H:%M:%S')
     
-    # 第一阶段：提前20分钟启动（21:10）
-    logger.info("===== 第一阶段监控开始 =====")
-    phase1_result = get_lottery_result(phase=1)
+    logger.info(f"====== {notification_time} 开奖监控启动 ======")
     
-    # 关键修复：第一阶段获取到任何结果都发送通知
-    if phase1_result:
-        logger.info("✅ 第一阶段获取到开奖结果，立即发送通知")
-        send_dingtalk_message(phase1_result)
-        send_email(phase1_result)
-        logger.info("====== 通知发送完成! ======")
-        return
-    
-    # 等待进入第二阶段（21:31:31 - 21:34:59）
-    phase2_start = current_time.replace(hour=21, minute=31, second=31, microsecond=0)
-    
-    # 如果还没到第二阶段开始时间，等待
-    if current_time < phase2_start:
-        wait_seconds = (phase2_start - current_time).total_seconds()
-        logger.info(f"🕒 等待 {wait_seconds:.0f} 秒进入第二阶段...")
-        time.sleep(wait_seconds)
+    # 第一阶段：提前20分钟启动（21:10:00 - 21:31:30）
+    if now.time() < datetime.strptime("21:31:30", "%H:%M:%S").time():
+        logger.info("进入第一阶段监控（提前开奖检测）...")
+        result = get_lottery_result()
+        if result:
+            logger.info("✅ 获取到开奖结果（可能提前开奖）")
+            logger.info(f"开奖时间: {result['openTime']} | 当前时间: {notification_time}")
+            send_dingtalk_message(result, notification_time)
+            send_email(result, notification_time)
+            logger.info("====== 通知发送完成! ======")
+            return True
     
     # 第二阶段：密集监控（21:31:31 - 21:34:59）
-    logger.info("===== 第二阶段监控开始 =====")
-    phase2_result = get_lottery_result(phase=2)
+    logger.info("进入第二阶段监控（密集检测）...")
+    end_time = datetime.strptime("21:35:00", "%H:%M:%S").time()
     
-    if phase2_result:
-        logger.info("✅ 第二阶段获取到开奖结果")
-        send_dingtalk_message(phase2_result)
-        send_email(phase2_result)
-        logger.info("====== 通知发送完成! ======")
-    else:
-        logger.error("❌ 错误：未获取到有效开奖结果，终止执行")
-        exit(1)
+    while now.time() < end_time:
+        result = get_lottery_result()
+        if result and is_today(result):
+            logger.info("✅ 获取到今日开奖结果")
+            logger.info(f"开奖时间: {result['openTime']} | 当前时间: {notification_time}")
+            send_dingtalk_message(result, notification_time)
+            send_email(result, notification_time)
+            logger.info("====== 通知发送完成! ======")
+            return True
+        
+        # 更新当前时间
+        now = datetime.now(beijing_tz)
+        notification_time = now.strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f"等待开奖结果... 当前时间: {notification_time}")
+        time.sleep(10)  # 每10秒检查一次
+    
+    logger.error("❌ 错误：未能在开奖窗口期内获取到有效开奖结果")
+    return False
 
 if __name__ == "__main__":
-    main()
+    if not monitor_lottery():
+        exit(1)
