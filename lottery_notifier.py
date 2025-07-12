@@ -221,12 +221,12 @@ def send_dingtalk_message(result, notification_time):
         logger.error(f"❌ 钉钉消息发送失败: {str(e)}")
 
 def send_email(result, notification_time):
-    """发送邮件通知"""
+    """发送邮件通知（完全修复版本）"""
     logger.info("准备发送邮件通知...")
     
     # QQ邮箱配置
     smtp_host = "smtp.qq.com"
-    port = 465  # SSL端口
+    port = 587  # 使用TLS端口
     sender = os.environ['EMAIL_USER']
     password = os.environ['EMAIL_PASSWORD']
     receiver = os.environ['EMAIL_TO']
@@ -248,11 +248,16 @@ def send_email(result, notification_time):
         try:
             logger.info(f"尝试发送邮件 (#{attempt}/{EMAIL_MAX_RETRIES})...")
             
-            # 创建安全SSL上下文
+            # 创建安全SSL上下文 - 使用更兼容的设置
             context = ssl.create_default_context()
+            context.set_ciphers('DEFAULT@SECLEVEL=1')  # 降低安全级别
             
-            # 使用SMTP_SSL直接建立SSL连接
-            with smtplib.SMTP_SSL(smtp_host, port, context=context, timeout=20) as server:
+            # 使用SMTP连接（TLS方式）
+            with smtplib.SMTP(smtp_host, port, timeout=20) as server:
+                server.ehlo()  # 发送EHLO命令
+                server.starttls(context=context)  # 启动TLS加密
+                server.ehlo()  # 再次发送EHLO命令
+                
                 # 登录邮箱
                 server.login(sender, password)
                 
@@ -262,13 +267,28 @@ def send_email(result, notification_time):
             logger.info("✅ 邮件发送成功！")
             success = True
             break
-        except Exception as e:
-            error_msg = f"❌ 邮件发送失败 (#{attempt}/{EMAIL_MAX_RETRIES}): {str(e)}"
+        except smtplib.SMTPAuthenticationError as e:
+            error_msg = f"❌ 认证失败 (#{attempt}/{EMAIL_MAX_RETRIES}): {str(e)}"
             logger.error(error_msg)
             error_log += error_msg + "\n"
-            if attempt < EMAIL_MAX_RETRIES:
-                logger.info(f"🕒 {EMAIL_RETRY_DELAY}秒后重试...")
-                time.sleep(EMAIL_RETRY_DELAY)
+            logger.error("请检查邮箱地址和授权码是否正确")
+        except (smtplib.SMTPServerDisconnected, ConnectionResetError) as e:
+            error_msg = f"❌ 连接断开 (#{attempt}/{EMAIL_MAX_RETRIES}): {str(e)}"
+            logger.error(error_msg)
+            error_log += error_msg + "\n"
+        except smtplib.SMTPException as e:
+            error_msg = f"❌ SMTP协议错误 (#{attempt}/{EMAIL_MAX_RETRIES}): {str(e)}"
+            logger.error(error_msg)
+            error_log += error_msg + "\n"
+        except Exception as e:
+            error_msg = f"❌ 未知错误 (#{attempt}/{EMAIL_MAX_RETRIES}): {str(e)}"
+            logger.error(error_msg)
+            error_log += error_msg + "\n"
+        
+        # 如果还有重试机会，等待后重试
+        if attempt < EMAIL_MAX_RETRIES:
+            logger.info(f"🕒 {EMAIL_RETRY_DELAY}秒后重试...")
+            time.sleep(EMAIL_RETRY_DELAY)
     
     # 记录失败日志
     if not success:
