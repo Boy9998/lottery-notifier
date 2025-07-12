@@ -1,0 +1,33 @@
+name: Lottery Result Notifier
+
+on:
+  schedule:
+    # 每天UTC时间13:10:00运行 (对应北京时间21:10:00)
+    - cron: "0 13 * * *"
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        
+      - name: 设置Python环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: 安装依赖
+        run: |
+          pip install requests
+          pip install pytz
+          
+      - name: 运行开奖通知脚本
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python lottery_notifier.py
