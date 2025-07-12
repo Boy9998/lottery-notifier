@@ -3,7 +3,7 @@ name: Lottery Result Notifier
 on:
   schedule:
     # 每天UTC时间13:10:00运行 (对应北京时间21:10:00)
-    - cron: "0 13 * * *"
+    - cron: "00 13 * * *"
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
           pip install requests
           pip install pytz
           
-      - name: 运行开奖通知脚本
+      - name: 运行开奖监控脚本
         env:
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
