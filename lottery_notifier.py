@@ -226,7 +226,7 @@ def send_email(result, notification_time):
     
     # QQ邮箱配置
     smtp_host = "smtp.qq.com"
-    port = 465  # 使用TLS端口
+    port = 587  # 使用TLS端口
     sender = os.environ['EMAIL_USER']
     password = os.environ['EMAIL_PASSWORD']
     receiver = os.environ['EMAIL_TO']
